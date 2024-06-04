@@ -31,17 +31,17 @@ void free_pipefds(int **pipefds, int pipe_count){
 
 int main() {
 int command_index = 0;
-int num_of_commands = 0;
+int num_of_commands = 1;
 char command[1024];
 char last_command[1024] = {"0"};
 char prompt[1024] = "hello:";
 char *token;
+char *command1;
 char *outfile;
 int i, fd, amper, redirect, retid, status, redirect_error, redirect_append;
 int exit_status = -1;
 int infinte_proccess = 0;
-int pipe_mode = 0;
-// char *argv[10];
+char *argv[10];
 // char **argv[command_index][10];
 
 
@@ -52,6 +52,8 @@ signal(SIGINT, sigint_handler);
 // infinte_proccess = 1;   
 while (1)
 {
+    num_of_commands = 1;
+    command_index = 0;
     printf("%s ", prompt);
     fgets(command, 1024, stdin);
     command[strlen(command) - 1] = '\0';
@@ -63,74 +65,49 @@ while (1)
         }
     }
     printf("Number of commandsssssss: %d\n", num_of_commands); // debug
-    //allocate memory for char **argv[num_of_commands][10]:
-    char ***argv = (char ***)malloc(num_of_commands * sizeof(char **));
-    // if(***argv == NULL){
-    //     printf("Memory allocation failed.\n");
-    //     return 1;
-    // }
-    for(int i = 0; i < num_of_commands; i++){
-        argv[i] = (char **)malloc(10 * sizeof(char *));
-        if(argv[i] == NULL){
+    char *copy_command = strdup(command);
+    if(copy_command == NULL){
+        printf("Memory allocation failed.\n");
+        return 1;
+    }
+    char **commandns = malloc(num_of_commands * sizeof(char *)); 
+    command1 = strtok (copy_command,"|");
+    // count number of commands (pipe "|" separated between commands)
+    // int command_index = 1;
+    while (command1 != NULL)
+    {
+        // argv[i] = token;
+        commandns[command_index] = command1;
+        printf("commandns[%d]: %s\n", command_index, commandns[command_index]); // debug
+        command1 = strtok (NULL, "|");
+        command_index++;
+        // printf("token[%d]: %s\n", i, token);
+    }
+
+    // define pipes has number of commands - 1
+    int **pipefds = (int **)malloc((num_of_commands - 1) * sizeof(int *));
+    for (int i = 0; i < (num_of_commands - 1); i++) {
+        pipefds[i] = (int *)malloc(2 * sizeof(int));
+        if (pipefds[i] == NULL) {
             printf("Memory allocation failed.\n");
+            free_pipefds(pipefds, (num_of_commands - 1));
+            return 1;
+        }
+        pipe(pipefds[i]);
+        if(pipefds[i] == -1){
+            perror("pipe");
+            free_pipefds(pipefds, (num_of_commands - 1));
             return 1;
         }
     }
-    // // check if command contains "|"
-    // if(strstr(command, "|") != NULL){
-    //     pipe_mode = 1;
-    // }
-    // printf("pipe_mode: %d\n", pipe_mode); // debug
-    //     // count how many pipes are in the command
-    //     int pipe_count = 0;
-    //     for(int i = 0; i < strlen(command); i++){
-    //         if(command[i] == '|'){
-    //             pipe_count++;
-    //         }
-    //     }
-
-    //     // Create a 2D array with pipe_count rows and 2 columns
-    //     int **pipefds = (int **)malloc(pipe_count * sizeof(int *));
-    //     for (int i = 0; i < pipe_count; i++) {
-    //         pipefds[i] = (int *)malloc(2 * sizeof(int));
-    //         if (pipefds[i] == NULL) {
-    //             printf("Memory allocation failed.\n");
-    //             free_pipefds(pipefds, pipe_count);
-    //             return 1;
-    //         }
-    //         pipe(pipefds[i]);
-    //         if(pipefds[i] == -1){
-    //             perror("pipe");
-    //             free_pipefds(pipefds, pipe_count);
-    //             return 1;
-    //         }
-    //     }
-        
-    //     // command_index = pipe_count + 1;
-    //     // alolocate memory for the commands
-    //     char **commands = malloc((pipe_count + 1) * sizeof(char *));
-    //     if(commands == NULL){
-    //         printf("Memory allocation failed.\n");
-    //         return 1;
-    //     }
-    //     // duplicate the command
-    //     char *command_copy_str = strdup(command);
-    //     if(command_copy_str == NULL){
-    //         printf("Memory allocation failed.\n");
-    //         return 1;
-    //     }
-    //     // split the command by "|"
-    //     for(int i = 0; i < pipe_count + 1; i++){
-    //         token = strtok(command_copy_str, "|");
-    //         commands[i] = token;
-    //         command_copy_str = NULL;
-    //     }
-    //     // print the commands
-    //     for(int i = 0; i < pipe_count + 1; i++){
-    //         printf("Command %d: %s\n", i, commands[i]);
-    //     }
-    //     free(command_copy_str);
-    // }
+    // activate the pipes
+    for(int i = 0; i < num_of_commands - 1; i++){
+        if(pipe(pipefds[i]) == -1){
+            perror("pipe");
+            free_pipefds(pipefds, (num_of_commands - 1));
+            return 1;
+        }
+    }
     if(!(strcmp(command, "!!"))) {
         if(strlen(last_command) == 0) {
             printf("No commands in history.\n");
@@ -145,74 +122,47 @@ while (1)
     if(!(strcmp(command, "quit"))) {
         exit(0);
     }
+    for(int index = 0; index < num_of_commands; index++){
+        printf("enter to for loop\n"); // debug
+
     /* parse command line */
     i = 0;
     // token = strtok (command," ");
-    token = strtok (command," ");
-    // count number of commands (pipe "|" separated between commands)
-    // int command_index = 1;
+    token = strtok (commandns[index]," ");
     while (token != NULL)
     {
-        // argv[i] = token;
-        argv[command_index][i] = token;
+        argv[i] = token;
+        // argv[command_index][i] = token;
         printf("token[%d]: %s\n", i, token); // debug
-        if(!(strcmp(token, "|"))){
-            command_index++;
-        // check if there is a command after the pipe
-        }
         token = strtok (NULL, " ");
         i++;
         // printf("token[%d]: %s\n", i, token);
     }
-
-    // if command_index > 0 then we have a pipe
-    // add for loop to allocate the pipes array and create the pipes
-    // if(command_index > 0){
-    //     printf("Number of commands: %d\n", command_index); // debug
-    //     // Create a 2D array with pipe_count rows and 2 columns
-    //     int **pipefds = (int **)malloc((command_index - 1) * sizeof(int *));
-    //     for (int i = 0; i < (command_index - 1); i++) {
-    //         pipefds[i] = (int *)malloc(2 * sizeof(int));
-    //         if (pipefds[i] == NULL) {
-    //             printf("Memory allocation failed.\n");
-    //             free_pipefds(pipefds, (command_index - 1));
-    //             return 1;
-    //         }
-    //         pipe(pipefds[i]);
-    //         if(pipefds[i] == -1){
-    //             perror("pipe");
-    //             free_pipefds(pipefds, (command_index - 1));
-    //             return 1;
-    //         }
-    //     }
-    // }
     
-    // argv[i] = NULL;
-    argv[command_index][i] = NULL;
-    printf("Number of commands: %d\n", command_index); // debug
+    argv[i] = NULL;
     /* Is command empty */
-    // if (argv[0] == NULL){ // old code
-    if (argv[command_index][0] == NULL){
+    if (argv[0] == NULL){ // old code
+    // if (argv[command_index][0] == NULL){
         // call to zeroing function
         continue;
     }
         
 
     /* Does command line end with & */ 
-    // if (! strcmp(argv[i - 1], "&")) { // old code
-    if (! strcmp(argv[command_index][i - 1], "&")) {
+    if (! strcmp(argv[i - 1], "&")) { // old code
+    // if (! strcmp(argv[command_index][i - 1], "&")) {
         amper = 1;
-        // argv[i - 1] = NULL; // old code
-        argv[command_index][i - 1] = NULL;
+        argv[i - 1] = NULL; // old code
+        // argv[command_index][i - 1] = NULL;
     }
     else 
         amper = 0; 
-    // if(!(strcmp(argv[0], "cd"))){ // old code
-    if(!(strcmp(argv[command_index][0], "cd"))){
-        // if(argv[1] != NULL){ // old code
-        if(argv[command_index][1] != NULL){
-            // if (chdir(argv[1]) != 0) { // old code
-            if (chdir(argv[command_index][1]) != 0) {
+    if(!(strcmp(argv[0], "cd"))){ // old code
+    // if(!(strcmp(argv[command_index][0], "cd"))){
+        if(argv[1] != NULL){ // old code
+        // if(argv[command_index][1] != NULL){
+            if (chdir(argv[1]) != 0) { // old code
+            // if (chdir(argv[command_index][1]) != 0) {
             perror("cd");
         }
         }
@@ -227,50 +177,50 @@ while (1)
         redirect = 0;
         continue;
     } 
-    // else if (! strcmp(argv[i - 2], ">")) { // old code
-    else if (! strcmp(argv[command_index][i - 2], ">")) {
+    else if (! strcmp(argv[i - 2], ">")) { // old code
+    // else if (! strcmp(argv[command_index][i - 2], ">")) {
         redirect = 1;
         redirect_error = 0;
         redirect_append = 0; 
-        // argv[i - 2] = NULL;  // old code
-        argv[command_index][i - 2] = NULL;
-        // outfile = argv[i - 1]; // old code
-        outfile = argv[command_index][i - 1];
+        argv[i - 2] = NULL;  // old code
+        // argv[command_index][i - 2] = NULL;
+        outfile = argv[i - 1]; // old code
+        // outfile = argv[command_index][i - 1];
         }
         
-    // else if (! strcmp(argv[i - 2], "2>")) { // old code
-    else if (! strcmp(argv[command_index][i - 2], "2>")) {
+    else if (! strcmp(argv[i - 2], "2>")) { // old code
+    // else if (! strcmp(argv[command_index][i - 2], "2>")) {
         redirect_error = 1;
         redirect = 0;
         redirect_append = 0;
-        // argv[i - 2] = NULL; // old code
-        argv[command_index][i - 2] = NULL;
-        // outfile = argv[i - 1];
-        outfile = argv[command_index][i - 1];        
+        argv[i - 2] = NULL; // old code
+        // argv[command_index][i - 2] = NULL;
+        outfile = argv[i - 1];
+        // outfile = argv[command_index][i - 1];        
         }
-    // else if (! strcmp(argv[i - 2], ">>")) { // old code
-    else if (! strcmp(argv[command_index][i - 2], ">>")) {
+    else if (! strcmp(argv[i - 2], ">>")) { // old code
+    // else if (! strcmp(argv[command_index][i - 2], ">>")) {
         redirect_append = 1;
         redirect_error = 0;
         redirect = 0;
-        // argv[i - 2] = NULL; // old code
-        argv[command_index][i - 2] = NULL;
-        // outfile = argv[i - 1]; // old code
-        outfile = argv[command_index][i - 1];
+        argv[i - 2] = NULL; // old code
+        // argv[command_index][i - 2] = NULL;
+        outfile = argv[i - 1]; // old code
+        // outfile = argv[command_index][i - 1];
         }
-    // else if (! (strcmp(argv[0], "prompt") && strcmp(argv[1], "="))) {    // old code
-    else if (! (strcmp(argv[command_index][0], "prompt") && strcmp(argv[command_index][1], "="))) {
+    else if (! (strcmp(argv[0], "prompt") && strcmp(argv[1], "="))) {    // old code
+    // else if (! (strcmp(argv[command_index][0], "prompt") && strcmp(argv[command_index][1], "="))) {
         redirect_append = 0;
         redirect_error = 0;
         redirect = 0;
-        // strcpy(prompt, argv[2]); // old code
-        strcpy(prompt, argv[command_index][2]);
+        strcpy(prompt, argv[2]); // old code
+        // strcpy(prompt, argv[command_index][2]);
         }
-    // else if (!(strcmp(argv[0], "echo"))) { // old code
-    else if (!(strcmp(argv[command_index][0], "echo"))) {
+    else if (!(strcmp(argv[0], "echo"))) { // old code
+    // else if (!(strcmp(argv[command_index][0], "echo"))) {
         // assume that argv[1] is never null 
-        // if(!(strcmp(argv[1], "$?"))) { // old code
-        if(!(strcmp(argv[command_index][1], "$?"))) {
+        if(!(strcmp(argv[1], "$?"))) { // old code
+        // if(!(strcmp(argv[command_index][1], "$?"))) {
             printf("%d\n", exit_status); // Print the stored exit status
             redirect_append = 0;
             redirect_error = 0;
@@ -306,16 +256,28 @@ while (1)
 
     // if (fork() == 0) {
     pid = fork();
-    if (pid == 0) { 
+    if (pid == 0) {
+        // for the first command we need to redirect the read output to the next pipe
+        if(index > 0)
+        {
+            dup2(pipefds[index - 1][0], 0);
+        }
+        if(index < num_of_commands - 1)
+        {
+            dup2(pipefds[index][1], 1);
+        }
+        // close all the pipes
+        for (int i = 0; i < num_of_commands - 1; i++) {
+            close(pipefds[i][0]);
+            close(pipefds[i][1]);
+        }
+        // if it is the first command we need to redirect the output to the pipe 
         if(infinte_proccess){
             // infinte_proccess = 0;
             while(1){
                 printf("Infinite Proccess\n");
                 sleep(2);
             }
-        }
-        if(pipe_mode){
-            
         }
         /* redirection of IO ? */
         if (redirect) {
@@ -340,10 +302,11 @@ while (1)
             dup(fd); 
             close(fd); 
             /* stdout is now redirected */
-        }  
-        // execvp(argv[0], argv);
-        execvp(argv[command_index][0], argv[command_index]);
+        }
+        printf("argv[0]: %s\n", argv[0]); // debug  
+        execvp(argv[0], argv);
     }
+
 /*
 The WIFEXITED macro is used to check if a child process terminated normally (i.e., by calling exit or 
 returning from the main function). 
@@ -351,7 +314,16 @@ It takes an integer status code returned by wait or waitpid as its argument and 
 a non-zero value if the child process terminated normally.
 */
   /* parent continues here */
+  // close all the pipes
+        for (int i = 0; i < num_of_commands - 1; i++) {
+            close(pipefds[i][0]);
+            close(pipefds[i][1]);
+        }
+        for(int i = 0; i < num_of_commands; i++){
+            wait(NULL);
+        }
         if (amper == 0) {
+            
                     retid = wait(&status);
                     if (retid != -1) {
                         if (WIFEXITED(status)) {
@@ -360,7 +332,8 @@ a non-zero value if the child process terminated normally.
                             exit_status = 128 + WTERMSIG(status); // Store the signal number
                         }
                     }
-                }
+        }
                 // free(command_copy);
             }
+}
 }
