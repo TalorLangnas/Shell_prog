@@ -1,15 +1,34 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <fcntl.h>
-#include "stdio.h"
-#include "errno.h"
-#include "stdlib.h"
-#include "unistd.h"
+#include <stdio.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include <string.h>
 #include <signal.h>
 
+#define MAX_COMMAND_LENGTH 1024
+#define MAX_HISTORY 20
+
+#define MAX_VARIABLES 100
+#define MAX_VAR_NAME_LEN 50
+#define MAX_VAR_VALUE_LEN 100
+
 volatile sig_atomic_t ctrl_c_pressed = 0;
 int pid;
+
+char history[MAX_HISTORY][MAX_COMMAND_LENGTH];
+int history_count = 0;
+int history_index = -1;
+
+typedef struct {
+    char name[MAX_VAR_NAME_LEN];
+    char value[MAX_VAR_VALUE_LEN];
+} Variable;
+
+Variable variables[MAX_VARIABLES];
+int variable_count = 0;
 
 // Define the signal handler function
 void sigint_handler(int sig) {
@@ -26,6 +45,75 @@ void free_pipefds(int **pipefds, int pipe_count) {
         free(pipefds[i]);
     }
     free(pipefds);
+}
+
+void set_variable(char *name, char *value) {
+    for (int i = 0; i < variable_count; i++) {
+        if (strcmp(variables[i].name, name) == 0) {
+            strncpy(variables[i].value, value, MAX_VAR_VALUE_LEN);
+            return;
+        }
+    }
+    if (variable_count < MAX_VARIABLES) {
+        strncpy(variables[variable_count].name, name, MAX_VAR_NAME_LEN);
+        strncpy(variables[variable_count].value, value, MAX_VAR_VALUE_LEN);
+        variable_count++;
+    }
+}
+
+char* get_variable(char *name) {
+    for (int i = 0; i < variable_count; i++) {
+        if (strcmp(variables[i].name, name) == 0) {
+            return variables[i].value;
+        }
+    }
+    return NULL;
+}
+
+void substitute_variables(char *command) {
+    char temp_command[1024];
+    strcpy(temp_command, command);
+    char substituted_command[1024] = "";
+    char *token = strtok(temp_command, " ");
+    
+    while (token != NULL) {
+        if (token[0] == '$') {
+            char *value = get_variable(token + 1);
+            if (value != NULL) {
+                strcat(substituted_command, value);
+            } else {
+                strcat(substituted_command, token);  // Keep the original token if variable not found
+            }
+        } else {
+            strcat(substituted_command, token);
+        }
+        strcat(substituted_command, " ");
+        token = strtok(NULL, " ");
+    }
+    
+    // Remove the trailing space
+    if (strlen(substituted_command) > 0) {
+        substituted_command[strlen(substituted_command) - 1] = '\0';
+    }
+    strcpy(command, substituted_command);
+}
+
+
+void add_to_history(const char *command) {
+    printf("enter to add to history\n");
+    if (history_count < MAX_HISTORY) {
+        strcpy(history[history_count], command);
+        history_count++;
+    } else {
+        for (int i = 0; i < MAX_HISTORY - 1; i++) {
+            strcpy(history[i], history[i + 1]);
+        }
+        strcpy(history[MAX_HISTORY - 1], command);
+    }
+    //print history array
+    for(int i = 0; i < history_count; i++) {
+        printf("history[%d]: %s\n", i, history[i]);
+    }
 }
 
 int main() {
@@ -49,6 +137,35 @@ int main() {
         fflush(stdout);
         fgets(command, 1024, stdin);
         command[strlen(command) - 1] = '\0';
+        printf("command debug: %s\n", command);
+        // Handle arrow key presses for command history
+        if (strcmp(command, "\033[A") == 0) { // Up arrow
+            printf("up arrow\n");
+            if (history_index < history_count - 1) {
+                history_index++;
+                strcpy(command, history[history_count - history_index - 1]);
+            }
+            printf("\r%s: %s", prompt, command);
+            fflush(stdout);
+            continue;
+        } else if (strcmp(command, "\033[B") == 0) { // Down arrow
+            printf("down arrow\n");
+            if (history_index >= 0) {
+                history_index--;
+                if (history_index >= 0) {
+                    strcpy(command, history[history_count - history_index - 1]);
+                } else {
+                    strcpy(command, last_command);
+                }
+            }
+            printf("\r%s: %s", prompt, command);
+            fflush(stdout);
+            continue;
+        }
+
+        // Add command to history
+        add_to_history(command);
+        strcpy(last_command, command);
 
         // Handle pipes
         if (strstr(command, "|") != NULL) {
@@ -160,6 +277,19 @@ int main() {
             strcpy(last_command, command);
         }
 
+        // Handle variable assignment
+        if (strchr(command, '=') != NULL && strstr(command, "echo") == NULL) {
+            token = strtok(command, " =");
+            char *var_name = token;
+            var_name++;
+            token = strtok(NULL, " =");
+            char *var_value = token;
+            set_variable(var_name, var_value);
+            continue;
+        }
+
+        substitute_variables(command);
+
         char *command_copy = strdup(command);
         if (!(strcmp(command, "quit"))) {
             exit(0);
@@ -231,21 +361,36 @@ int main() {
                 free(command_copy);
                 continue;
             } else {
-                int length = strlen(command_copy) - 5;
-                char *substring = malloc(length + 1);
-                if (substring == NULL) {
-                    printf("Memory allocation failed.\n");
-                    free(command_copy);
-                    return 1;
+                for (int j = 1; argv[j] != NULL; j++) {
+                    if (argv[j][0] == '$') {
+                        char *value = get_variable(argv[j] + 1);
+                        if (value != NULL) {
+                            printf("%s ", value);
+                        } else {
+                            printf("%s ", argv[j]);
+                        }
+                    } else {
+                        printf("%s ", argv[j]);
+                    }
                 }
-                strncpy(substring, &command_copy[5], length);
-                substring[length] = '\0';
-                printf("%s\n", substring);
-                fflush(stdout);  // Ensure output is flushed
-                free(substring);
+                printf("\n");
+                fflush(stdout);
                 free(command_copy);
                 continue;
             }
+        } else if (!(strcmp(argv[0], "read"))) {
+            if (argv[1] != NULL) {
+                char input[1024];
+                printf("");
+                fflush(stdout);
+                fgets(input, 1024, stdin);
+                input[strlen(input) - 1] = '\0';
+                set_variable(argv[1], input);
+            } else {
+                printf("Usage: read <variable>\n");
+            }
+            free(command_copy);
+            continue;
         } else {
             redirect = 0;
             redirect_error = 0;
