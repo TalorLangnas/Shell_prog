@@ -32,11 +32,9 @@ typedef struct {
 Variable variables[MAX_VARIABLES];
 int variable_count = 0;
 
-// Define the signal handler function
 void sigint_handler(int sig) {
     printf("\nYou typed Control-C!\nhello: ");
     fflush(stdout);
-    // exit from the child process
     if (pid != 0) {
         kill(pid, SIGKILL);
     }
@@ -84,7 +82,7 @@ void substitute_variables(char *command) {
             if (value != NULL) {
                 strcat(substituted_command, value);
             } else {
-                strcat(substituted_command, token);  // Keep the original token if variable not found
+                strcat(substituted_command, token);
             }
         } else {
             strcat(substituted_command, token);
@@ -93,15 +91,34 @@ void substitute_variables(char *command) {
         token = strtok(NULL, " ");
     }
     
-    // Remove the trailing space
     if (strlen(substituted_command) > 0) {
         substituted_command[strlen(substituted_command) - 1] = '\0';
     }
     strcpy(command, substituted_command);
 }
 
+int execute_command(char *command) {
+    int status;
+    pid = fork();
+    if (pid == 0) {
+        char *argv[10];
+        int i = 0;
+        char *token = strtok(command, " ");
+        while (token != NULL) {
+            argv[i++] = token;
+            token = strtok(NULL, " ");
+        }
+        argv[i] = NULL;
+        execvp(argv[0], argv);
+        perror("execvp");
+        exit(1);
+    } else {
+        wait(&status);
+        return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    }
+}
+
 int main() {
-    // Initialize the history library
     using_history();
     char *command;
     char last_command[1024] = {0};
@@ -115,130 +132,91 @@ int main() {
     char *argv[10];
     int iter_counter = 0;
 
-    // Register the signal handler for SIGINT (Ctrl+C)
     signal(SIGINT, sigint_handler);
 
     while (1) {
         command = readline(prompt);
         if (command == NULL) {
-            break; // Exit on EOF
+            break;
         }
         
         if (strlen(command) == 0) {
             free(command);
-            continue; // Ignore empty commands
+            continue;
         }
 
-        // Add command to history
         add_history(command);
         
         strcpy(last_command, command);
 
-        // Handle pipes
-        if (strstr(command, "|") != NULL) {
-            pipe_mode = 1;
-            // Count the number of pipes
-            int pipe_count = 0;
-            for (int i = 0; i < strlen(command); i++) {
-                if (command[i] == '|') {
-                    pipe_count++;
-                }
-            }
+        // if (strncmp(command, "if", 2) == 0) {
+        if (strncmp(command, "if ", 3) == 0){
+            printf("enter to if condition\n");
+            int inside_else = 0, inside_else_if = 0;
+            char condition[MAX_COMMAND_LENGTH];
+            char then_command[MAX_COMMAND_LENGTH];
+            char else_command[MAX_COMMAND_LENGTH];
+            char else_if_condition[MAX_COMMAND_LENGTH];
+            char else_if_command[MAX_COMMAND_LENGTH];
 
-            // Create pipes
-            int **pipefds = (int **)malloc(pipe_count * sizeof(int *));
-            for (int i = 0; i < pipe_count; i++) {
-                pipefds[i] = (int *)malloc(2 * sizeof(int));
-                if (pipefds[i] == NULL) {
-                    printf("Memory allocation failed.\n");
-                    free_pipefds(pipefds, pipe_count);
-                    free(command);
-                    return 1;
-                }
-                if (pipe(pipefds[i]) == -1) {
-                    perror("pipe");
-                    free_pipefds(pipefds, pipe_count);
-                    free(command);
-                    return 1;
-                }
-            }
+            sscanf(command, "if %[^\n]s", condition);
+            printf("> : ");
+            fgets(command, MAX_COMMAND_LENGTH, stdin);
 
-            // Allocate memory for commands
-            char **commands = malloc((pipe_count + 1) * sizeof(char *));
-            if (commands == NULL) {
-                printf("Memory allocation failed.\n");
-                free_pipefds(pipefds, pipe_count);
+            if (strncmp(command, "then\n", 5) != 0) {
+                printf("Syntax error: expected \"then\" command\n");
                 free(command);
-                return 1;
+                continue;
             }
+            fgets(then_command, MAX_COMMAND_LENGTH, stdin);
+            then_command[strcspn(then_command, "\n")] = 0;
+            printf("> : ");
+            fgets(command, MAX_COMMAND_LENGTH, stdin);
 
-            // Duplicate the command
-            char *command_copy_str = strdup(command);
-            if (command_copy_str == NULL) {
-                printf("Memory allocation failed.\n");
-                free(commands);
-                free_pipefds(pipefds, pipe_count);
-                free(command);
-                return 1;
-            }
-
-            // Split the command by "|"
-            for (int i = 0; i < pipe_count + 1; i++) {
-                commands[i] = strsep(&command_copy_str, "|");
-            }
-
-            // Execute the commands
-            for (int i = 0; i < pipe_count + 1; i++) {
-                pid = fork();
-                if (pid == 0) {
-                    // Redirect input from previous pipe if not the first command
-                    if (i > 0) {
-                        dup2(pipefds[i - 1][0], 0);
-                    }
-                    // Redirect output to next pipe if not the last command
-                    if (i < pipe_count) {
-                        dup2(pipefds[i][1], 1);
-                    }
-                    // Close all pipe file descriptors
-                    for (int j = 0; j < pipe_count; j++) {
-                        close(pipefds[j][0]);
-                        close(pipefds[j][1]);
-                    }
-                    // Tokenize the command
-                    int j = 0;
-                    token = strtok(commands[i], " ");
-                    while (token != NULL) {
-                        argv[j] = token;
-                        token = strtok(NULL, " ");
-                        j++;
-                    }
-                    argv[j] = NULL;
-                    execvp(argv[0], argv);
-                    perror("execvp");
-                    exit(1);
+            if (strncmp(command, "else if ", 8) == 0) {
+                inside_else_if = 1;
+                sscanf(command, "else if %[^\n]s", else_if_condition);
+                printf("> : ");
+                fgets(command, MAX_COMMAND_LENGTH, stdin);
+                if (strncmp(command, "then\n", 5) != 0) {
+                    printf("Syntax error: expected \"then\" command for \"else if\"\n");
+                    free(command);
+                    continue;
                 }
+                fgets(else_if_command, MAX_COMMAND_LENGTH, stdin);
+                else_if_command[strcspn(else_if_command, "\n")] = 0;
+                printf("> : ");
+                fgets(command, MAX_COMMAND_LENGTH, stdin);
             }
 
-            // Close all pipe file descriptors in the parent
-            for (int i = 0; i < pipe_count; i++) {
-                close(pipefds[i][0]);
-                close(pipefds[i][1]);
+            if (strncmp(command, "else\n", 5) == 0) {
+                fgets(else_command, MAX_COMMAND_LENGTH, stdin);
+                else_command[strcspn(else_command, "\n")] = 0;
+                inside_else = 1;
+                printf("> : ");
+                fgets(command, MAX_COMMAND_LENGTH, stdin);
             }
 
-            // Wait for all child processes to finish
-            for (int i = 0; i < pipe_count + 1; i++) {
-                wait(&status);
+            if (strncmp(command, "fi\n", 3) != 0) {
+                printf("Syntax error: expected \"fi\" at the end\n");
+                free(command);
+                continue;
             }
 
-            free(command_copy_str);
-            free(commands);
-            free_pipefds(pipefds, pipe_count);
+            condition[strcspn(condition, "\n")] = 0;
+
+            if (execute_command(condition)) {
+                execute_command(then_command);
+            } else if (inside_else_if && execute_command(else_if_condition)) {
+                execute_command(else_if_command);
+            } else if (inside_else) {
+                execute_command(else_command);
+            }
+
             free(command);
-            pipe_mode = 0;
             continue;
         }
 
-        // Handle history (!!)
         if (!(strcmp(command, "!!"))) {
             if (strlen(last_command) == 0) {
                 printf("No commands in history.\n");
@@ -250,7 +228,6 @@ int main() {
             strcpy(last_command, command);
         }
 
-        // Handle variable assignment
         if (strchr(command, '=') != NULL && strstr(command, "echo") == NULL) {
             token = strtok(command, " =");
             char *var_name = token;
@@ -270,7 +247,6 @@ int main() {
             exit(0);
         }
 
-        // Parse command line
         i = 0;
         token = strtok(command, " ");
         while (token != NULL) {
@@ -280,14 +256,12 @@ int main() {
         }
         argv[i] = NULL;
 
-        // Check if command is empty
         if (argv[0] == NULL) {
             free(command_copy);
             free(command);
             continue;
         }
 
-        // Check if command ends with &
         if (!strcmp(argv[i - 1], "&")) {
             amper = 1;
             argv[i - 1] = NULL;
@@ -295,7 +269,6 @@ int main() {
             amper = 0;
         }
 
-        // Handle built-in commands
         if (!(strcmp(argv[0], "cd"))) {
             if (argv[1] != NULL) {
                 if (chdir(argv[1]) != 0) {
@@ -323,102 +296,82 @@ int main() {
             outfile = argv[i - 1];
         } else if (i > 2 && !strcmp(argv[i - 2], ">>")) {
             redirect_append = 1;
-            redirect_error = 0;
             redirect = 0;
+            redirect_error = 0;
             argv[i - 2] = NULL;
             outfile = argv[i - 1];
-        } else if (i > 2 && !strcmp(argv[0], "prompt") && !strcmp(argv[1], "=")) {
-            strcpy(prompt, argv[2]);
-            free(command_copy);
-            free(command);
-            continue;
-        } else if (!(strcmp(argv[0], "echo"))) {
-            if (!(strcmp(argv[1], "$?"))) {
-                printf("%d\n", exit_status);
-                fflush(stdout);  // Ensure output is flushed
-                free(command_copy);
-                free(command);
-                continue;
-            } else {
-                for (int j = 1; argv[j] != NULL; j++) {
-                    if (argv[j][0] == '$') {
-                        char *value = get_variable(argv[j] + 1);
-                        if (value != NULL) {
-                            printf("%s ", value);
-                        } else {
-                            printf("%s ", argv[j]);
-                        }
-                    } else {
-                        printf("%s ", argv[j]);
-                    }
-                }
-                printf("\n");
-                fflush(stdout);
-                free(command_copy);
-                free(command);
-                continue;
-            }
-        } else if (!(strcmp(argv[0], "read"))) {
-                if (argv[1] != NULL) {
-                    char input[1024];
-                    fflush(stdout);
-                    fgets(input, 1024, stdin);
-                    input[strlen(input) - 1] = '\0';
-                    set_variable(argv[1], input);
-                } else {
-                    printf("Usage: read <variable>\n");
-                }
-                free(command_copy);
-                free(command);
-                continue;
-            
-
         } else {
             redirect = 0;
             redirect_error = 0;
             redirect_append = 0;
         }
 
-        // Handle external commands
-        pid = fork();
-        if (pid == 0) {
-            if (redirect) {
-                fd = creat(outfile, 0660);
-                close(STDOUT_FILENO);
-                dup(fd);
-                close(fd);
+        pipe_mode = 0;
+        for (int j = 0; j < i; j++) {
+            if (strcmp(argv[j], "|") == 0) {
+                pipe_mode = 1;
+                break;
             }
-            if (redirect_error) {
-                fd = creat(outfile, 0660);
-                close(STDERR_FILENO);
-                dup(fd);
-                close(fd);
-            }
-            if (redirect_append) {
-                fd = open(outfile, O_WRONLY | O_APPEND, 0660);
-                close(STDOUT_FILENO);
-                dup(fd);
-                close(fd);
-            }
-            execvp(argv[0], argv);
-            perror("execvp");
-            exit(1);
         }
 
-        // Parent process
-        if (amper == 0) {
-            retid = wait(&status);
-            if (retid != -1) {
-                if (WIFEXITED(status)) {
-                    exit_status = WEXITSTATUS(status);
-                } else if (WIFSIGNALED(status)) {
-                    exit_status = 128 + WTERMSIG(status);
+        if (pipe_mode) {
+            int num_cmds = 0;
+            char *cmds[10];
+            char *cmd_token = strtok(command_copy, "|");
+            while (cmd_token != NULL) {
+                cmds[num_cmds++] = cmd_token;
+                cmd_token = strtok(NULL, "|");
+            }
+            
+            int **pipefds = malloc((num_cmds - 1) * sizeof(int *));
+            for (int i = 0; i < num_cmds - 1; i++) {
+                pipefds[i] = malloc(2 * sizeof(int));
+                pipe(pipefds[i]);
+            }
+            
+            for (int i = 0; i < num_cmds; i++) {
+                pid = fork();
+                if (pid == 0) {
+                    if (i > 0) {
+                        dup2(pipefds[i - 1][0], 0);
+                    }
+                    if (i < num_cmds - 1) {
+                        dup2(pipefds[i][1], 1);
+                    }
+                    for (int j = 0; j < num_cmds - 1; j++) {
+                        close(pipefds[j][0]);
+                        close(pipefds[j][1]);
+                    }
+                    char *cmd_argv[10];
+                    int cmd_argc = 0;
+                    char *cmd_token = strtok(cmds[i], " ");
+                    while (cmd_token != NULL) {
+                        cmd_argv[cmd_argc++] = cmd_token;
+                        cmd_token = strtok(NULL, " ");
+                    }
+                    cmd_argv[cmd_argc] = NULL;
+                    execvp(cmd_argv[0], cmd_argv);
+                    perror("execvp");
+                    exit(1);
                 }
+            }
+            for (int i = 0; i < num_cmds - 1; i++) {
+                close(pipefds[i][0]);
+                close(pipefds[i][1]);
+            }
+            for (int i = 0; i < num_cmds; i++) {
+                wait(NULL);
+            }
+            free_pipefds(pipefds, num_cmds - 1);
+        } else {
+            if (execute_command(command_copy) != 0) {
+                exit_status = 0;
+            } else {
+                exit_status = 1;
             }
         }
         free(command_copy);
         free(command);
     }
-
     return 0;
 }
