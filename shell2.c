@@ -7,6 +7,8 @@
 #include <unistd.h>
 #include <string.h>
 #include <signal.h>
+#include <readline/readline.h>
+#include <readline/history.h>
 
 #define MAX_COMMAND_LENGTH 1024
 #define MAX_HISTORY 20
@@ -98,28 +100,12 @@ void substitute_variables(char *command) {
     strcpy(command, substituted_command);
 }
 
-
-void add_to_history(const char *command) {
-    printf("enter to add to history\n");
-    if (history_count < MAX_HISTORY) {
-        strcpy(history[history_count], command);
-        history_count++;
-    } else {
-        for (int i = 0; i < MAX_HISTORY - 1; i++) {
-            strcpy(history[i], history[i + 1]);
-        }
-        strcpy(history[MAX_HISTORY - 1], command);
-    }
-    //print history array
-    for(int i = 0; i < history_count; i++) {
-        printf("history[%d]: %s\n", i, history[i]);
-    }
-}
-
 int main() {
-    char command[1024];
-    char last_command[1024] = {"0"};
-    char prompt[1024] = "hello";
+    // Initialize the history library
+    using_history();
+    char *command;
+    char last_command[1024] = {0};
+    char prompt[1024] = "hello: ";
     char *token;
     char *outfile;
     int i, fd, amper, redirect, retid, status, redirect_error, redirect_append;
@@ -133,38 +119,19 @@ int main() {
     signal(SIGINT, sigint_handler);
 
     while (1) {
-        printf("%s: ", prompt);
-        fflush(stdout);
-        fgets(command, 1024, stdin);
-        command[strlen(command) - 1] = '\0';
-        printf("command debug: %s\n", command);
-        // Handle arrow key presses for command history
-        if (strcmp(command, "\033[A") == 0) { // Up arrow
-            printf("up arrow\n");
-            if (history_index < history_count - 1) {
-                history_index++;
-                strcpy(command, history[history_count - history_index - 1]);
-            }
-            printf("\r%s: %s", prompt, command);
-            fflush(stdout);
-            continue;
-        } else if (strcmp(command, "\033[B") == 0) { // Down arrow
-            printf("down arrow\n");
-            if (history_index >= 0) {
-                history_index--;
-                if (history_index >= 0) {
-                    strcpy(command, history[history_count - history_index - 1]);
-                } else {
-                    strcpy(command, last_command);
-                }
-            }
-            printf("\r%s: %s", prompt, command);
-            fflush(stdout);
-            continue;
+        command = readline(prompt);
+        if (command == NULL) {
+            break; // Exit on EOF
+        }
+        
+        if (strlen(command) == 0) {
+            free(command);
+            continue; // Ignore empty commands
         }
 
         // Add command to history
-        add_to_history(command);
+        add_history(command);
+        
         strcpy(last_command, command);
 
         // Handle pipes
@@ -185,11 +152,13 @@ int main() {
                 if (pipefds[i] == NULL) {
                     printf("Memory allocation failed.\n");
                     free_pipefds(pipefds, pipe_count);
+                    free(command);
                     return 1;
                 }
                 if (pipe(pipefds[i]) == -1) {
                     perror("pipe");
                     free_pipefds(pipefds, pipe_count);
+                    free(command);
                     return 1;
                 }
             }
@@ -199,6 +168,7 @@ int main() {
             if (commands == NULL) {
                 printf("Memory allocation failed.\n");
                 free_pipefds(pipefds, pipe_count);
+                free(command);
                 return 1;
             }
 
@@ -208,6 +178,7 @@ int main() {
                 printf("Memory allocation failed.\n");
                 free(commands);
                 free_pipefds(pipefds, pipe_count);
+                free(command);
                 return 1;
             }
 
@@ -262,6 +233,7 @@ int main() {
             free(command_copy_str);
             free(commands);
             free_pipefds(pipefds, pipe_count);
+            free(command);
             pipe_mode = 0;
             continue;
         }
@@ -270,6 +242,7 @@ int main() {
         if (!(strcmp(command, "!!"))) {
             if (strlen(last_command) == 0) {
                 printf("No commands in history.\n");
+                free(command);
                 continue;
             }
             strcpy(command, last_command);
@@ -285,6 +258,7 @@ int main() {
             token = strtok(NULL, " =");
             char *var_value = token;
             set_variable(var_name, var_value);
+            free(command);
             continue;
         }
 
@@ -292,6 +266,7 @@ int main() {
 
         char *command_copy = strdup(command);
         if (!(strcmp(command, "quit"))) {
+            free(command);
             exit(0);
         }
 
@@ -308,6 +283,7 @@ int main() {
         // Check if command is empty
         if (argv[0] == NULL) {
             free(command_copy);
+            free(command);
             continue;
         }
 
@@ -331,6 +307,7 @@ int main() {
                 }
             }
             free(command_copy);
+            free(command);
             continue;
         } else if (i > 2 && !strcmp(argv[i - 2], ">")) {
             redirect = 1;
@@ -353,12 +330,14 @@ int main() {
         } else if (i > 2 && !strcmp(argv[0], "prompt") && !strcmp(argv[1], "=")) {
             strcpy(prompt, argv[2]);
             free(command_copy);
+            free(command);
             continue;
         } else if (!(strcmp(argv[0], "echo"))) {
             if (!(strcmp(argv[1], "$?"))) {
                 printf("%d\n", exit_status);
                 fflush(stdout);  // Ensure output is flushed
                 free(command_copy);
+                free(command);
                 continue;
             } else {
                 for (int j = 1; argv[j] != NULL; j++) {
@@ -376,21 +355,24 @@ int main() {
                 printf("\n");
                 fflush(stdout);
                 free(command_copy);
+                free(command);
                 continue;
             }
         } else if (!(strcmp(argv[0], "read"))) {
-            if (argv[1] != NULL) {
-                char input[1024];
-                printf("");
-                fflush(stdout);
-                fgets(input, 1024, stdin);
-                input[strlen(input) - 1] = '\0';
-                set_variable(argv[1], input);
-            } else {
-                printf("Usage: read <variable>\n");
-            }
-            free(command_copy);
-            continue;
+                if (argv[1] != NULL) {
+                    char input[1024];
+                    fflush(stdout);
+                    fgets(input, 1024, stdin);
+                    input[strlen(input) - 1] = '\0';
+                    set_variable(argv[1], input);
+                } else {
+                    printf("Usage: read <variable>\n");
+                }
+                free(command_copy);
+                free(command);
+                continue;
+            
+
         } else {
             redirect = 0;
             redirect_error = 0;
@@ -435,5 +417,8 @@ int main() {
             }
         }
         free(command_copy);
+        free(command);
     }
+
+    return 0;
 }
