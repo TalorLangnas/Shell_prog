@@ -5,15 +5,39 @@ void sigint_handler(int sig) {
     if (sig == SIGINT) {
         printf("\nYou typed Control-C!\n");
         // Re-display the prompt
-        printf("hello: ");
+        printf("%s", current_prompt);
         fflush(stdout);
     }
 }
 
+/* ========== INPUT PREPROCESSING FUNCTIONS ============ */
+
+// Function to trim leading and trailing whitespace from a string
+char* trim_whitespace(char *str) {
+    // Trim leading whitespace
+    while (*str == ' ' || *str == '\t' || *str == '\n')
+        str++;
+
+    // Trim trailing whitespace
+    char *end = str + strlen(str) - 1;
+    while (end > str && (*end == ' ' || *end == '\t' || *end == '\n'))
+        end--;
+
+    // Null-terminate the trimmed string
+    *(end + 1) = '\0';
+
+    return str;
+}
+
 // Function for reading a line from the user, returns the line
-char *read_line(char *prompt, const char *history_file) {
-    char *line = readline(prompt);
-    if (line == NULL) {
+char *read_line(char *prompt) {
+
+    char *input = readline(prompt);
+    
+    // Trim leading and trailing whitespace
+    char *line = trim_whitespace(input);
+
+    if (strlen(line) == 0) { // Handle empty input
         return NULL;
     }
 
@@ -32,17 +56,57 @@ char *read_line(char *prompt, const char *history_file) {
     if (strcmp(line, "quit") == 0) {
         free(line); // Free the allocated memory for "quit"
         printf("quit is received, Exiting shell...\n");
+        if (current_prompt) {
+            free(current_prompt); // Free the old prompt memory
+        }
         exit(0);
+    }
+
+     // Handle "prompt = newprompt" to change the prompt
+    if (strncmp(line, "prompt = ", 9) == 0) {
+        char *new_prompt = line + 9;
+        set_prompt(new_prompt);
+        // If the line is not empty, add it to the history
+        if (line && *line) {
+            add_history(line);
+        }
+        free(line); // Free the allocated memory for the old line
+        return NULL; // Continue the loop without further processing
     }
 
     // If the line is not empty, add it to the history
     if (line && *line) {
         add_history(line);
-        // Save the history to the file
-        write_history(history_file);
     }
 
     return line;
+}
+
+// Function to set the readline prompt
+void set_prompt(const char *new_prompt) {
+    if (current_prompt) {
+        free(current_prompt); // Free the old prompt memory
+    }
+    current_prompt = strdup(new_prompt); // Update the global prompt variable
+    
+    // Calculate the length of the new prompt
+    size_t len = strlen(current_prompt);
+    
+    // Reallocate memory for the new prompt plus one extra character for the space
+    current_prompt = (char *)realloc(current_prompt, (len + 2) * sizeof(char));
+
+    // Check if reallocation was successful
+    if (current_prompt == NULL) {
+        perror("realloc failed in set_prompt\n");
+        return;
+    }
+
+    // Add a space at the end of the new prompt
+    current_prompt[len] = ' ';
+    current_prompt[len + 1] = '\0'; // Null-terminate the string
+
+    rl_set_prompt(current_prompt); // Set the new prompt
+    rl_redisplay(); // Refresh the display
 }
 
 // Help Function for read_variable func, returns the line with no prompt
@@ -62,15 +126,13 @@ char *read_line_no_prompt(const char *history_file) {
     return line;
 }
 
-/**
+/*
  * split_line - split a string into multiple strings
  * @line: string to be splited
- *
  * Return: pointer that points to the new array
  */
 
 char **split_line(char *line, char *tok_delim, int *argc){
-    // printf("enter to split_line\n"); // debug
     int bufsize = 64;
     int i = 0;
     char **tokens = malloc(bufsize * sizeof(char *));
@@ -109,6 +171,17 @@ char **split_line(char *line, char *tok_delim, int *argc){
  return (tokens);
 }
 
+// Function to retrieve the last command from history
+char *get_last_command() {
+    HIST_ENTRY *last_entry = previous_history();
+    if (last_entry == NULL) {
+        return NULL;
+    }
+    return strdup(last_entry->line);
+}
+
+/* ====================================================== */
+/* ============= COMMAND HANDLING FUNCTIONS ============ */
 
 int launch(char ***commands, int num_of_pipes, int amper, Variable *variables)
 {
@@ -132,7 +205,7 @@ int launch(char ***commands, int num_of_pipes, int amper, Variable *variables)
                 argc++;
             }
             Case current_case = get_case(commands[i], &argc, &amper);
-            int status = modify_varaiabels(commands[i], &argc, current_case, variables);
+            int status = configure_command(commands[i], &argc, current_case, variables);
             if(status != 0){
                 exit(status);
             }
@@ -192,61 +265,17 @@ int execute(char *command, Variable *variables){
         num_of_pipes = count_pipes(argv, argc);
     }
     char ***commands = split_commands(argv, num_of_pipes, argc);
-    // print_commands(commands, num_of_pipes + 1);
     curr_status = launch(commands, num_of_pipes, amper, variables);
     free_commands(commands, num_of_pipes + 1);
     return curr_status;
 }
 
-
-Case get_case(char *argv[], int *argc, int *amper) {
-    // printf("enter to get_case\n"); // debug
-    if (!strcmp(argv[*argc - 1], "&")) {
-        // printf("marked AMPER\n"); // debug
-        // return AMPER;
-        argv[*argc - 1] = NULL;
-        *argc = *argc - 1;
-        *amper = 1;
-    } if (*argc > 1 && !strcmp(argv[*argc - 2], ">")) {
-        return REDIRECT;
-    } else if (*argc > 1 && !strcmp(argv[*argc - 2], "2>")) {
-        // printf("marked REDIRECT_ERROR\n"); // debug
-        return REDIRECT_ERROR;
-    } else if (*argc > 1 && !strcmp(argv[*argc - 2], ">>")) {
-        return REDIRECT_APPEND;
-    } else if (*argc > 1 && !strcmp(argv[0], "echo") && !strcmp(argv[1], "$?")) {
-        // printf("marked ECHODOLLAR\n"); // debug
-        return ECHODOLLAR;
-    } else if (*argc > 1 && !strcmp(argv[0], "echo") && strcmp(argv[1], "$?")) {
-        // printf("marked ECHO\n"); // debug
-        return ECHO;
-    } else if (*argc >= 1 && !strcmp(argv[0], "cd")) {
-        return CD;    
-    } else if (check_pipe(argv, *argc)) {
-        // printf("marked PIPE\n"); // debug
-        return PIPE;
-    } else if (check_var_sub(argv, *argc)) {
-        // printf("marked VAR_SUB\n"); // debug
-        return VAR_SUB;
-    } else if(check_read(argv, *argc)){
-        // printf("marked READ\n"); // debug
-        return READ;
-    }else {
-        return DEFAULT;
-    } 
-}
-
-// void modify_varaiabels(char **argv, int argc, Case current_case, int *fd_in, int *fd_out) {
-// int modify_varaiabels(char **argv, int *argc, Case current_case) {
-// int modify_varaiabels(char **argv, int *argc, Case current_case, Variable *variables, int var_count){
-int modify_varaiabels(char **argv, int *argc, Case current_case, Variable *variables){
-    // printf("enter to modify_varaiabels\n"); // debug
+int configure_command(char **argv, int *argc, Case current_case, Variable *variables){
     int status = 0;
     switch (current_case) {
         case DEFAULT:
             break;
         case REDIRECT:
-            // redirect(argv, argc, fd_in, fd_out);
             redirect(argv, *argc);
             break;
         case REDIRECT_ERROR:
@@ -260,51 +289,70 @@ int modify_varaiabels(char **argv, int *argc, Case current_case, Variable *varia
         case ECHO:
             break;
         case ECHODOLLAR:
-        // printf("enter to modify_varaiabels - ECHODOLLAR\n"); // debug
             echo_dollar(argv, argc);
             break;
         case CD:
-            // exit(change_dir(argv, argc)); // Handle CD case here and exit with the status code
             break;
         case VAR_SUB:
-        // printf("enter to modify_varaiabels - VAR_SUB\n"); // debug
-        // printf("argv[0]: %s\n", argv[0]); // debug
-        // printf("argv[2]: %s\n", argv[2]); // debug
-            // status = set_variable(variables, var_count, argv[0] + 1, argv[2]);
-            // status = set_variable(variables, argv[0] + 1, argv[2]);
             break;
         default:
             break;
     }
-    //  printf("last line in modify_varaiabels\n"); // debug
     return status;
 }
 // Function to handle with variabels of redirection case the redirection
-// void redirect(char *argv[], int argc, int *fd_in, int *fd_out) {
 void redirect(char *argv[], int argc) {
-    char *outfile;
-    int fd;
-    argv[argc - 2] = NULL;
-    outfile = argv[argc - 1];
-    // *fd_out = argv[argc - 1];
-    fd = open(outfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    // *fd_in = open(outfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    // if (*fd_in == -1) {
-    if (fd == -1) {
-        perror("open");
+     int fd;
+    
+    if (argc < 3) {
+        fprintf(stderr, "Invalid command syntax\n");
         exit(1);
     }
-    // if (dup2(*fd_in, STDOUT_FILENO) == -1) {
-    if (dup2(fd, STDOUT_FILENO) == -1) {
-        perror("dup2");
-        exit(1);
+
+    if(!strcmp(argv[argc - 2], ">")){
+        char *outfile;
+        argv[argc - 2] = NULL;
+        outfile = argv[argc - 1];
+        fd = open(outfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd == -1) {
+            perror("open");
+            exit(1);
+        }
+        if (dup2(fd, STDOUT_FILENO) == -1) {
+            perror("dup2");
+            exit(1);
+        }
+        if (close(fd) == -1) {
+            perror("close");
+            exit(1);
+        }
     }
-    // if (close(*fd_in) == -1) {
-    if (close(fd) == -1) {
-        perror("close");
+    else if(!strcmp(argv[argc - 2], "<")){
+        char *infile = argv[argc - 1];
+        argv[argc - 2] = NULL; // Terminate the arguments list before the '<'
+        
+        
+        fd = open(infile, O_RDONLY);
+        if (fd == -1) {
+            perror("open");
+            exit(1);
+        }
+        if (dup2(fd, STDIN_FILENO) == -1) {
+            perror("dup2");
+            exit(1);
+        }
+        if (close(fd) == -1) {
+            perror("close");
+            exit(1);
+        }
+    }
+     else {
+        printf("enter to else\n"); // debug
+        fprintf(stderr, "Invalid redirection operator\n");
         exit(1);
     }
 }
+
 
 void redirect_error(char *argv[], int argc) {
     // printf("enter to redirect_error\n"); // debug
@@ -383,17 +431,42 @@ int change_dir(char **argv, int argc) {
         }
     }
 }
+/* ==================================================== */ 
 
-// Function to retrieve the last command from history
-char *get_last_command() {
-    HIST_ENTRY *last_entry = previous_history();
-    if (last_entry == NULL) {
-        return NULL;
-    }
-    return strdup(last_entry->line);
+
+
+
+
+/* ================= CASE CHECKS ==================== */
+
+Case get_case(char *argv[], int *argc, int *amper) {
+    if (!strcmp(argv[*argc - 1], "&")) {
+        argv[*argc - 1] = NULL;
+        *argc = *argc - 1;
+        *amper = 1;
+    } if (check_redirect(argv, *argc)) {
+        return REDIRECT;
+    } else if (*argc > 1 && !strcmp(argv[*argc - 2], "2>")) {
+        return REDIRECT_ERROR;
+    } else if (*argc > 1 && !strcmp(argv[*argc - 2], ">>")) {
+        return REDIRECT_APPEND;
+    } else if (*argc > 1 && !strcmp(argv[0], "echo") && !strcmp(argv[1], "$?")) {
+        return ECHODOLLAR;
+    } else if (*argc > 1 && !strcmp(argv[0], "echo") && strcmp(argv[1], "$?")) {
+        return ECHO;
+    } else if (*argc >= 1 && !strcmp(argv[0], "cd")) {
+        return CD;    
+    } else if (check_pipe(argv, *argc)) {
+        return PIPE;
+    } else if (check_var_sub(argv, *argc)) {
+        return VAR_SUB;
+    } else if(check_read(argv, *argc)){
+        return READ;
+    } else {
+        return DEFAULT;
+    } 
 }
 
-/* ============= PIPE FUNCTIONS ==================== */
 int check_pipe(char *argv[], int argc) {
     // printf("enter to check_pipe\n"); // debug
     int i;
@@ -406,6 +479,47 @@ int check_pipe(char *argv[], int argc) {
     // printf("no pipe found\n"); // debug
     return 0;
 }
+
+int check_var_sub(char *argv[], int argc) {
+    // printf("enter to check_var_sub\n"); // debug
+    // printf("argc in var_sub: %d\n", argc); // debug
+    if (argc < 3) {
+        return 0; // Insufficient arguments
+    }
+
+    if (argv[0][0] == '$' && strcmp(argv[1], "=") == 0 && argv[2] != NULL) {
+        // printf("Variable substitution syntax detected\n"); // debug
+        return 1; // Variable substitution syntax detected
+    }
+
+    return 0; // Not variable substitution syntax
+}
+
+int check_read(char *argv[], int argc) {
+    if (argc < 2) {
+        return 0; // Insufficient arguments
+    }
+
+    if ((!strcmp(argv[0], "read")) && (argv[1] != NULL)) {
+        printf("Variable substitution READ syntax detected\n"); // debug
+        return 1; // Variable substitution syntax detected
+    }
+
+    return 0; // Not variable substitution syntax
+}
+
+int check_redirect(char *argv[], int argc){
+    if((argc > 1 && !strcmp(argv[argc - 2], ">")) || (argc > 1 && !strcmp(argv[argc - 2], "<"))) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+/* ================================================== */
+
+
+
+/* ============= PIPE FUNCTIONS ==================== */
 
 int count_pipes(char **argv, int argc){
     int i;
@@ -622,20 +736,20 @@ int run_conditions(char *if_buff, char *command_buff1, char *command_buff2, Vari
 
 int preprocess_conditions(char *line, Variable *variables){
     char *if_buff;
-    char *then_buff;
-    char *command_buff1;
-    char *else_buff;
-    char *command_buff2;
-    char *fi_buff;
+    char *then_buff_input;
+    char *command_buff1_input;
+    char *else_buff_input;
+    char *command_buff2_input;
+    char *fi_buff_input;
 
     if_buff = remove_if_prefix(line);
-    // printf("if_buff: %s\n", if_buff); // debug
     if (if_buff == NULL) {
         perror("Error in if input\n");
         return 1;
     }
 
-    then_buff = readline("> ");
+    then_buff_input = readline("> ");
+    char *then_buff = trim_whitespace(then_buff_input); // Trim leading and trailing whitespace
     if (then_buff && *then_buff) {
         add_history(then_buff);
     }
@@ -646,7 +760,8 @@ int preprocess_conditions(char *line, Variable *variables){
         return 1;
     }
 
-    command_buff1 = readline("> ");
+    command_buff1_input = readline("> ");
+    char *command_buff1 = trim_whitespace(command_buff1_input); // Trim leading and trailing whitespace
     if (command_buff1 && *command_buff1) {
         add_history(command_buff1);
     }
@@ -657,7 +772,8 @@ int preprocess_conditions(char *line, Variable *variables){
         return 1;
     }
 
-    else_buff = readline("> ");
+    else_buff_input = readline("> ");
+    char *else_buff = trim_whitespace(else_buff_input); // Trim leading and trailing whitespace
     if (else_buff && *else_buff) {
         add_history(else_buff);
     }
@@ -669,7 +785,8 @@ int preprocess_conditions(char *line, Variable *variables){
         return 1;
     }
 
-    command_buff2 = readline("> ");
+    command_buff2_input = readline("> ");
+    char *command_buff2 = trim_whitespace(command_buff2_input); // Trim leading and trailing whitespace
     if (command_buff2 && *command_buff2) {
         add_history(command_buff2);
     }
@@ -682,7 +799,8 @@ int preprocess_conditions(char *line, Variable *variables){
         return 1;
     }
 
-    fi_buff = readline("> ");
+    fi_buff_input = readline("> ");
+    char *fi_buff = trim_whitespace(fi_buff_input); // Trim leading and trailing whitespace
     if (fi_buff && *fi_buff) {
         add_history(fi_buff);
     }
@@ -698,13 +816,13 @@ int preprocess_conditions(char *line, Variable *variables){
 
     // Run all the commands
     int result = run_conditions(if_buff, command_buff1, command_buff2, variables);
-    // printf("result: %d\n", result); // debug
+    
     // Free all buffers
-    free(then_buff);
-    free(command_buff1);
-    free(else_buff);
-    free(command_buff2);
-    free(fi_buff);
+    free(then_buff_input);
+    free(command_buff1_input);
+    free(else_buff_input);
+    free(command_buff2_input);
+    free(fi_buff_input);
 
     return result;
 }
@@ -720,36 +838,6 @@ char* remove_if_prefix(char *str) {
 /* ================================================== */
 
 /* ============= VARIABLES SUBTITUTION ==================== */
-
-int check_var_sub(char *argv[], int argc) {
-    // printf("enter to check_var_sub\n"); // debug
-    // printf("argc in var_sub: %d\n", argc); // debug
-    if (argc < 3) {
-        return 0; // Insufficient arguments
-    }
-
-    if (argv[0][0] == '$' && strcmp(argv[1], "=") == 0 && argv[2] != NULL) {
-        // printf("Variable substitution syntax detected\n"); // debug
-        return 1; // Variable substitution syntax detected
-    }
-
-    return 0; // Not variable substitution syntax
-}
-
-int check_read(char *argv[], int argc) {
-    printf("enter to check_read\n"); // debug
-    // printf("argc in var_sub: %d\n", argc); // debug
-    if (argc < 2) {
-        return 0; // Insufficient arguments
-    }
-
-    if ((!strcmp(argv[0], "read")) && (argv[1] != NULL)) {
-        printf("Variable substitution READ syntax detected\n"); // debug
-        return 1; // Variable substitution syntax detected
-    }
-
-    return 0; // Not variable substitution syntax
-}
 
 int read_variable(Variable variables[], char *name) {
     printf("enter to read_variable\n"); // debug

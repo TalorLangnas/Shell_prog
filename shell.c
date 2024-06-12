@@ -1,13 +1,20 @@
 #include "shell.h"
 
+// Global prompt variable
+char *current_prompt;
 int prev_status = 0;
 int variable_count = 0;
 
 int main() {
     
     int status;
-    // Define the name of the history file
-    const char *history_file = ".my_history";
+    char *default_prompt = "hello: ";
+
+    // Initialize the global prompt variable
+    current_prompt = strdup(default_prompt);
+    
+    // Set the default prompt
+    rl_set_prompt(current_prompt);
     
     char *command;
     Variable variables[MAX_VARIABLES];
@@ -15,10 +22,9 @@ int main() {
 
     while (1)
     {   
-        
-        command = read_line("hello: ", history_file);
+        command = read_line(current_prompt);
         if (command == NULL) {
-            printf("write something!! the input is empty\n");
+            continue;
         }
         // Handle if condition
         if (strncmp(command, "if ", 3) == 0) {
