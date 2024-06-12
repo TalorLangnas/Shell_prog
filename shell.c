@@ -34,8 +34,7 @@ int main() {
         }
         
         substitute_variables(variables, command);
-        status = execute(command, variables);
-        print_variables(variables);       
+        status = execute(command, variables); 
         prev_status = status;        
     }    
     
